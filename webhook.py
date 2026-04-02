@@ -131,15 +131,16 @@ def _build_notion_properties(fields: dict) -> dict:
         "Status": {"select": {"name": "Pending Review"}},
     }
 
-    _add_text(props, "Founder Name",     fields.get("founder_name"))
-    _add_text(props, "Raise Amount",     fields.get("raise_amount"))
-    _add_text(props, "One-liner",        fields.get("one_liner"))
-    _add_text(props, "Company Overview", fields.get("company_overview"))
-    _add_url(props,  "Founder LinkedIn", fields.get("founder_linkedin"))
-    _add_url(props,  "Company Website",  fields.get("company_website"))
-    _add_url(props,  "Deck Link",        fields.get("deck_link"))
-    _add_select(props, "Sector",         fields.get("sector"))
-    _add_select(props, "Stage",          fields.get("stage"))
+    _add_text(props,  "Founder Name",     fields.get("founder_name"))
+    _add_text(props,  "Raise Amount",     fields.get("raise_amount"))
+    _add_text(props,  "One-liner",        fields.get("one_liner"))
+    _add_text(props,  "Company Overview", fields.get("company_overview"))
+    _add_email(props, "Founder Email",    fields.get("founder_email"))
+    _add_url(props,   "Founder LinkedIn", fields.get("founder_linkedin"))
+    _add_url(props,   "Company Website",  fields.get("company_website"))
+    _add_url(props,   "Deck Link",        fields.get("deck_link"))
+    _add_select(props, "Sector",          fields.get("sector"))
+    _add_select(props, "Stage",           fields.get("stage"))
 
     return props
 
@@ -147,6 +148,11 @@ def _build_notion_properties(fields: dict) -> dict:
 def _add_text(props: dict, key: str, value: str | None) -> None:
     if value:
         props[key] = {"rich_text": [{"text": {"content": value}}]}
+
+
+def _add_email(props: dict, key: str, value: str | None) -> None:
+    if value:
+        props[key] = {"email": value}
 
 
 def _add_url(props: dict, key: str, value: str | None) -> None:

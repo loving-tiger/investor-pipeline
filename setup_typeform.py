@@ -64,6 +64,7 @@ FORM_FIELDS = [
                 {"label": "Pre-seed"},
                 {"label": "Seed"},
                 {"label": "Series A"},
+                {"label": "Late stage"},
             ]
         },
     },
@@ -100,7 +101,13 @@ FORM_FIELDS = [
         "title": "Your LinkedIn profile URL",
         "ref": "founder_linkedin",
         "type": "website",
-        "validations": {"required": False},
+        "validations": {"required": True},
+    },
+    {
+        "title": "Your email address",
+        "ref": "founder_email",
+        "type": "email",
+        "validations": {"required": True},
     },
     {
         "title": "Link to your pitch deck (optional)",

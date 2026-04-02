@@ -18,6 +18,7 @@ FIELD_REFS = [
     "raise_amount",
     "company_website",
     "founder_linkedin",
+    "founder_email",
     "deck_link",
     "company_overview",
 ]
