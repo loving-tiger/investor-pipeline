@@ -17,6 +17,7 @@ Deploy to Render:
 
 from __future__ import annotations
 
+import base64
 import hashlib
 import hmac
 import os
@@ -58,9 +59,8 @@ def _verify_signature(body: bytes, signature_header: str) -> bool:
     if not secret:
         # No secret configured — skip validation (local dev only)
         return True
-    expected = "sha256=" + hmac.new(
-        secret.encode("utf-8"), body, hashlib.sha256
-    ).hexdigest()
+    mac = hmac.new(secret.encode("utf-8"), body, hashlib.sha256)
+    expected = "sha256=" + base64.b64encode(mac.digest()).decode("utf-8")
     return hmac.compare_digest(expected, signature_header)
 
 
