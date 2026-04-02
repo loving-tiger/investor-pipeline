@@ -1,0 +1,15 @@
+services:
+  - type: web
+    name: deal-flow-webhook
+    runtime: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn webhook:app --host 0.0.0.0 --port $PORT
+    plan: free
+    envVars:
+      # Set all of these in the Render dashboard (never commit real values here)
+      - key: NOTION_TOKEN
+        sync: false
+      - key: NOTION_DB_ID
+        sync: false
+      - key: TYPEFORM_WEBHOOK_SECRET
+        sync: false
