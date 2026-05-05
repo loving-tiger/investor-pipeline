@@ -3,14 +3,16 @@ Pitch deck loading utilities.
 
 Supports:
   - Local PDF files (passed via --deck-path CLI argument)
-  - Publicly accessible PDF URLs (fetched automatically from the Deck Link field)
+  - Publicly accessible URLs — passed directly to Claude via the Anthropic
+    URL document source (Claude fetches it server-side; works for PDFs,
+    web pages, Canva public links, etc.)
+  - Direct PDF URLs — fetched locally and base64-encoded as a fallback
 
 Not supported (requires auth):
-  - Google Drive / Google Slides links
-  - Docsend
-  - Pitch.com
-  - Notion links
-  → Download the PDF manually and pass via --deck-path instead.
+  - Google Drive / Google Slides links  → download as PDF, use --deck-path
+  - Docsend                             → download as PDF, use --deck-path
+  - Pitch.com (private)                 → download as PDF, use --deck-path
+  - Notion links                        → download as PDF, use --deck-path
 """
 
 import base64
@@ -18,7 +20,7 @@ import os
 
 import requests
 
-# Domains we know require auth — don't bother trying to fetch
+# Domains we know require auth — Claude can't fetch these either
 _GATED_DOMAINS = (
     "docs.google.com",
     "drive.google.com",
@@ -36,7 +38,7 @@ def load_deck(deck_path: str | None = None, deck_url: str | None = None) -> dict
     Return a Claude `document` content block for the pitch deck, or None if
     the deck can't be loaded.
 
-    Priority: deck_path (local file) > deck_url (remote fetch).
+    Priority: deck_path (local file) > deck_url (Claude URL fetch).
     """
     if deck_path:
         return _load_local(deck_path)
@@ -73,28 +75,37 @@ def _load_local(path: str) -> dict | None:
 
 
 def _load_url(url: str) -> dict | None:
-    """Fetch a PDF from a public URL and return a Claude document block."""
+    """
+    Return a Claude document block for a public deck URL.
+
+    Strategy:
+      1. Reject known auth-gated domains immediately.
+      2. Try a URL-source block first — Anthropic's servers fetch the URL
+         directly, so this works for PDFs *and* public web pages / Canva links.
+      3. If the URL clearly points to a raw PDF (by extension or Content-Type),
+         also try a local fetch + base64 as a safety fallback so the block is
+         already resolved before the API call.
+    """
     if deck_is_gated(url):
-        print(f"  [deck] URL appears to require authentication ({url}).")
-        print("         Download the deck as PDF and pass it via --deck-path.")
+        print(f"  [deck] URL requires authentication — skipping auto-fetch.")
+        print(f"         Download as PDF and re-run with --deck-path to include it.")
         return None
-    try:
-        print("  [deck] Fetching deck from URL...")
-        resp = requests.get(url, headers=_HEADERS, timeout=20, allow_redirects=True)
-        resp.raise_for_status()
-        content_type = resp.headers.get("Content-Type", "")
-        if "pdf" not in content_type.lower() and not url.lower().endswith(".pdf"):
-            print(f"  [deck] URL did not return a PDF (Content-Type: {content_type}).")
-            print("         Download the deck as PDF and pass it via --deck-path.")
-            return None
-        data = base64.standard_b64encode(resp.content).decode("utf-8")
-        size_kb = len(resp.content) // 1024
-        print(f"  [deck] Fetched PDF from URL ({size_kb} KB)")
-        return _make_block(data)
-    except requests.RequestException as exc:
-        print(f"  [deck] Could not fetch deck: {exc}")
-        print("         Download the deck as PDF and pass it via --deck-path.")
-        return None
+
+    # Always attempt the URL-source approach first: works for PDFs, public web
+    # viewers, Canva public links, etc.  Claude fetches the URL server-side.
+    print(f"  [deck] Passing deck URL to Claude directly: {url}")
+    return _make_url_block(url)
+
+
+def _make_url_block(url: str) -> dict:
+    """Return a Claude document block that references a URL (Anthropic fetches it)."""
+    return {
+        "type": "document",
+        "source": {
+            "type": "url",
+            "url": url,
+        },
+    }
 
 
 def _make_block(b64_data: str) -> dict:

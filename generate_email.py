@@ -22,7 +22,7 @@ load_dotenv()
 
 import anthropic
 
-from utils.notion_client import get_deal, resolve_page_id, update_status, write_email
+from utils.notion_client import get_deal, read_page_text, resolve_page_id, update_status, write_email
 from utils.prompts import EMAIL_GENERATION_PROMPT, EMAIL_SYSTEM_PROMPT
 
 _REQUIRED_ENV = ["NOTION_TOKEN", "ANTHROPIC_API_KEY"]
@@ -59,15 +59,29 @@ def parse_args() -> argparse.Namespace:
 # Email generation
 # ---------------------------------------------------------------------------
 
+_TRACTION_KEYWORDS = {"ARR", "revenue", "users", "subscribers", "retention", "churn", "growth", "paid", "MRR"}
+
+def _extract_traction_signal(memo: str) -> str:
+    """Return the first sentence from the memo that contains a traction metric."""
+    for sentence in memo.replace("\n", " ").split(". "):
+        if any(kw.lower() in sentence.lower() for kw in _TRACTION_KEYWORDS):
+            return sentence.strip()[:300]
+    return ""
+
+
 def generate_email(deal: dict, investor_type: str) -> str:
     """Call Claude to write a custom investor outreach email."""
-    # Use the stored memo as context; truncate to keep the prompt tight
-    memo_summary = deal.get("investment_memo", "")[:3000].strip()
+    # Read memo from page body (no longer stored as a property)
+    memo_summary = read_page_text(deal["page_id"])[:3000].strip()
     if not memo_summary:
         memo_summary = (
             f"No memo available. One-liner: {deal['one_liner']}. "
             f"Run analyze_deal.py first for a richer output."
         )
+
+    # Extract a short traction signal from the memo (first ~400 chars that
+    # contain a metric keyword), falling back to the one-liner.
+    traction_signal = _extract_traction_signal(memo_summary) or deal.get("one_liner", "")
 
     prompt = EMAIL_GENERATION_PROMPT.format(
         company_name=deal["company_name"],
@@ -76,6 +90,7 @@ def generate_email(deal: dict, investor_type: str) -> str:
         raise_amount=deal["raise_amount"],
         sector=deal["sector"],
         one_liner=deal["one_liner"],
+        traction_signal=traction_signal,
         memo_summary=memo_summary,
         investor_type=investor_type,
     )

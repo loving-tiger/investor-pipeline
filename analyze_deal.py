@@ -18,7 +18,6 @@ Deck handling:
 """
 
 import argparse
-import asyncio
 import os
 import sys
 from datetime import datetime
@@ -38,13 +37,7 @@ from utils.notion_client import (
     write_memo,
 )
 from utils.prompts import ANALYSIS_SYSTEM_PROMPT, VC_AUDIT_PROMPT
-from utils.research import (
-    search_company,
-    search_competitors,
-    search_founder,
-    search_market,
-    search_sector_signals,
-)
+from utils.research_agent import run_research_agent
 
 _REQUIRED_ENV = ["NOTION_TOKEN", "ANTHROPIC_API_KEY", "EXA_API_KEY", "PERPLEXITY_API_KEY"]
 
@@ -79,25 +72,9 @@ def parse_args() -> argparse.Namespace:
 # Research
 # ---------------------------------------------------------------------------
 
-async def run_research(deal: dict) -> tuple[str, str, str, str, str]:
-    """Run 5 parallel searches and return results as a 5-tuple."""
-    print("    Starting 5 parallel searches (2 Exa + 1 Exa founder + 2 Perplexity)...")
-    results = await asyncio.gather(
-        search_company(deal["company_name"], deal["company_website"]),
-        search_founder(deal["founder_name"], deal["company_name"]),
-        search_competitors(deal["sector"], deal["one_liner"]),
-        search_market(deal["sector"], deal["one_liner"]),
-        search_sector_signals(deal["sector"]),
-        return_exceptions=True,
-    )
-    labels = ["Company research", "Founder research", "Competitor landscape", "Market & TAM", "Sector signals"]
-    for label, result in zip(labels, results):
-        status = "ERROR" if isinstance(result, Exception) else "done"
-        print(f"    [{status}] {label}")
-
-    return tuple(
-        r if isinstance(r, str) else f"[Search failed: {r}]" for r in results
-    )
+def run_research(deal: dict) -> str:
+    """Run the agentic research loop and return a structured research report."""
+    return run_research_agent(deal)
 
 
 # ---------------------------------------------------------------------------
@@ -106,24 +83,21 @@ async def run_research(deal: dict) -> tuple[str, str, str, str, str]:
 
 def generate_memo(
     deal: dict,
-    research: tuple[str, str, str, str, str],
+    research: str,
     deck_block: dict | None = None,
 ) -> str:
     """Call Claude with the VC audit prompt (+ optional deck) and return memo text."""
-    company_research, founder_research, competitor_research, market_research, sector_signals = research
-
     prompt_text = VC_AUDIT_PROMPT.format(
         company_name=deal["company_name"],
         founder_name=deal["founder_name"],
+        founder_linkedin=deal.get("founder_linkedin", ""),
+        company_website=deal.get("company_website", ""),
         stage=deal["stage"],
         raise_amount=deal["raise_amount"],
         sector=deal["sector"],
         one_liner=deal["one_liner"],
-        company_research=company_research,
-        founder_research=founder_research,
-        competitor_research=competitor_research,
-        market_research=market_research,
-        sector_signals=sector_signals,
+        company_overview=deal.get("company_overview", "").strip() or "(not provided)",
+        research=research,
     )
 
     # If a deck is available, prepend it as a document block and instruct
@@ -145,7 +119,7 @@ def generate_memo(
     client = anthropic.Anthropic()
     response = client.messages.create(
         model=model,
-        max_tokens=4096,
+        max_tokens=8192,
         system=ANALYSIS_SYSTEM_PROMPT,
         messages=[{"role": "user", "content": content}],
     )
@@ -156,7 +130,7 @@ def generate_memo(
 # Main
 # ---------------------------------------------------------------------------
 
-async def main() -> None:
+def main() -> None:
     _validate_env()
     args = parse_args()
 
@@ -205,9 +179,11 @@ async def main() -> None:
     update_analysis_date(page_id)
     print("  Done.")
 
-    # 4. Parallel web research
-    print("\n[4/5] Running web research (5 parallel searches)...")
-    research = await run_research(deal)
+    # 4. Agentic web research
+    print("\n[4/5] Running agentic research (iterative searches — up to 20 tool calls)...")
+    research = run_research(deal)
+    search_lines = [l for l in research.splitlines() if l.strip()]
+    print(f"  Research complete — {len(research):,} chars, {len(search_lines)} lines")
 
     # 5. Generate memo with Claude
     print(f"\n[5/5] Generating investment memo (model: {os.environ.get('ANTHROPIC_MODEL', 'claude-sonnet-4-6')})...")
@@ -234,4 +210,4 @@ async def main() -> None:
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    main()

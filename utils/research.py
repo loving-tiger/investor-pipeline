@@ -137,6 +137,47 @@ async def search_sector_signals(sector: str) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Sync search functions (for tool-calling loops)
+# ---------------------------------------------------------------------------
+
+def exa_search_sync(query: str, num_results: int = 5) -> str:
+    """Synchronous Exa search for use in Claude tool-calling loops."""
+    try:
+        results = _exa_client().search_and_contents(
+            query,
+            num_results=num_results,
+            text={"max_characters": 2000},
+        )
+        return _format_exa(results)
+    except Exception as exc:
+        return f"[Exa search error: {exc}]"
+
+
+def perplexity_search_sync(query: str) -> str:
+    """Synchronous Perplexity search for use in Claude tool-calling loops."""
+    system = (
+        "You are a research analyst. Provide specific, data-backed answers. "
+        "Include numbers, dates, and named entities. Cite sources inline. "
+        "Be concise — no preamble."
+    )
+    try:
+        response = _perplexity_client().chat.completions.create(
+            model=_PERPLEXITY_MODEL,
+            messages=[
+                {"role": "system", "content": system},
+                {"role": "user", "content": query},
+            ],
+        )
+        content = response.choices[0].message.content or ""
+        citations = getattr(response, "citations", None)
+        if citations:
+            content += "\n\nSources:\n" + "\n".join(f"- {c}" for c in citations)
+        return content
+    except Exception as exc:
+        return f"[Perplexity search error: {exc}]"
+
+
+# ---------------------------------------------------------------------------
 # Exa internals
 # ---------------------------------------------------------------------------
 

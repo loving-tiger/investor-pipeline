@@ -94,20 +94,37 @@ def update_status(page_id: str, status: str) -> None:
 
 
 def update_analysis_date(page_id: str) -> None:
-    """Set Analysis Date to today (ISO format)."""
+    """Set Raise Timeline to today (ISO format)."""
     _client().pages.update(
         page_id=page_id,
-        properties={"Analysis Date": {"date": {"start": date.today().isoformat()}}},
+        properties={"Raise Timeline": {"date": {"start": date.today().isoformat()}}},
     )
 
 
 def write_memo(page_id: str, memo_text: str) -> None:
-    """Write investment memo to the property field and replace page body content."""
-    _client().pages.update(
-        page_id=page_id,
-        properties={"Investment Memo": {"rich_text": _chunk(memo_text)}},
-    )
+    """Write investment memo to the page body only (not as a property)."""
     _replace_page_body(page_id, "Investment Memo", memo_text)
+
+
+def read_page_text(page_id: str) -> str:
+    """Read all paragraph and heading blocks from a page and return as plain text."""
+    text_parts: list[str] = []
+    cursor = None
+    while True:
+        kwargs = {"block_id": page_id, "page_size": 100}
+        if cursor:
+            kwargs["start_cursor"] = cursor
+        response = _client().blocks.children.list(**kwargs)
+        for block in response.get("results", []):
+            btype = block.get("type", "")
+            rich = block.get(btype, {}).get("rich_text", [])
+            line = "".join(span["plain_text"] for span in rich)
+            if line.strip():
+                text_parts.append(line)
+        if not response.get("has_more"):
+            break
+        cursor = response.get("next_cursor")
+    return "\n\n".join(text_parts)
 
 
 def write_email(page_id: str, email_text: str) -> None:

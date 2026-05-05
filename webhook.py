@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
-webhook.py — FastAPI webhook receiver for Typeform founder submissions.
+webhook.py — FastAPI webhook receiver for Typeform + Tally founder submissions.
 
-Receives form_response events from Typeform, validates the HMAC-SHA256
-signature, and creates a new row in the Notion Deal Flow database with
+Receives form_response events from Typeform and Tally, validates HMAC-SHA256
+signatures, and creates a new row in the Notion Deal Flow database with
 Status set to "Pending Review".
 
 Run locally:
@@ -11,8 +11,8 @@ Run locally:
 
 Deploy to Render:
     render.yaml in the project root handles all configuration.
-    Set NOTION_TOKEN, NOTION_DB_ID, TYPEFORM_WEBHOOK_SECRET in the
-    Render dashboard environment variables.
+    Set NOTION_TOKEN, NOTION_DB_ID, TYPEFORM_WEBHOOK_SECRET,
+    and TALLY_WEBHOOK_SECRET in the Render dashboard environment variables.
 """
 
 from __future__ import annotations
@@ -30,7 +30,8 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
 from notion_client import Client
 
-from utils.typeform_parser import parse_submission
+import utils.tally_parser as tally_parser
+import utils.typeform_parser as typeform_parser
 
 app = FastAPI(title="Deal Flow Webhook", version="1.0.0")
 
@@ -48,14 +49,14 @@ def _notion_client() -> Client:
 # Signature validation
 # ---------------------------------------------------------------------------
 
-def _verify_signature(body: bytes, signature_header: str) -> bool:
+def _verify_signature(body: bytes, signature_header: str, secret_env_var: str) -> bool:
     """
-    Validate the Typeform webhook signature.
+    Validate an HMAC-SHA256 webhook signature (used by both Typeform and Tally).
 
-    Typeform computes HMAC-SHA256(secret, raw_body) and sends the result
-    in the Typeform-Signature header as: sha256=<hex_digest>
+    Both platforms compute base64(HMAC-SHA256(secret, raw_body)) and send
+    the result as: sha256=<base64_digest>
     """
-    secret = os.environ.get("TYPEFORM_WEBHOOK_SECRET", "")
+    secret = os.environ.get(secret_env_var, "")
     if not secret:
         # No secret configured — skip validation (local dev only)
         return True
@@ -87,7 +88,7 @@ async def typeform_webhook(request: Request):
     body = await request.body()
     sig = request.headers.get("Typeform-Signature", "")
 
-    if not _verify_signature(body, sig):
+    if not _verify_signature(body, sig, "TYPEFORM_WEBHOOK_SECRET"):
         raise HTTPException(status_code=401, detail="Invalid webhook signature.")
 
     payload = await request.json()
@@ -96,7 +97,41 @@ async def typeform_webhook(request: Request):
     if event_type != "form_response":
         return JSONResponse({"status": "ignored", "event_type": event_type})
 
-    fields = parse_submission(payload)
+    fields = typeform_parser.parse_submission(payload)
+    return await _create_notion_page(fields, source="typeform")
+
+
+@app.post("/webhook/tally")
+async def tally_webhook(request: Request):
+    """
+    Handle an inbound Tally form_response event.
+
+    On success: creates a Notion page and returns {"status": "created", ...}
+    On bad signature: 401
+    On Notion error: 500
+    """
+    body = await request.body()
+    sig = request.headers.get("Tally-Signature", "")
+
+    if not _verify_signature(body, sig, "TALLY_WEBHOOK_SECRET"):
+        raise HTTPException(status_code=401, detail="Invalid webhook signature.")
+
+    payload = await request.json()
+    event_type = payload.get("eventType", "")
+
+    if event_type != "FORM_RESPONSE":
+        return JSONResponse({"status": "ignored", "event_type": event_type})
+
+    fields = tally_parser.parse_submission(payload)
+    return await _create_notion_page(fields, source="tally")
+
+
+# ---------------------------------------------------------------------------
+# Shared page creation
+# ---------------------------------------------------------------------------
+
+async def _create_notion_page(fields: dict, source: str) -> JSONResponse:
+    """Create a Notion page from a parsed fields dict."""
     company = fields.get("company_name") or "Untitled Submission"
 
     try:
@@ -105,16 +140,17 @@ async def typeform_webhook(request: Request):
             properties=_build_notion_properties(fields),
         )
     except Exception as exc:
-        print(f"ERROR creating Notion page for '{company}': {exc}")
+        print(f"ERROR creating Notion page for '{company}' (source={source}): {exc}")
         raise HTTPException(status_code=500, detail=f"Notion error: {exc}")
 
     page_id = page["id"]
-    print(f"[webhook] Created Notion page {page_id} — {company}")
+    print(f"[webhook:{source}] Created Notion page {page_id} — {company}")
 
     return JSONResponse({
         "status": "created",
         "page_id": page_id,
         "company": company,
+        "source": source,
     })
 
 
