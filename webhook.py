@@ -136,10 +136,13 @@ class ResearchMemoRequest(BaseModel):
     notion_page_id: str
 
 
+def _log(msg: str) -> None:
+    print(msg, flush=True)
+
+
 def _run_research_memo_background(page_id: str) -> None:
     """Run the full research memo pipeline in a background thread."""
     import sys
-    # Ensure the project root is on the path when running inside the server
     sys.path.insert(0, os.path.dirname(__file__))
 
     try:
@@ -148,15 +151,16 @@ def _run_research_memo_background(page_id: str) -> None:
         from utils.prompts import RESEARCH_SYSTEM_PROMPT, RESEARCH_PROMPT
         import anthropic
 
-        print(f"[research-memo] Starting pipeline for page {page_id}")
+        _log(f"[research-memo] Starting pipeline for page {page_id}")
         deal = get_deal(page_id)
         company = deal.get("company_name", page_id)
-        print(f"[research-memo] Company: {company}")
+        _log(f"[research-memo] Company: {company}")
 
         update_status(page_id, "In Analysis")
         research = run_research_agent(deal)
-        print(f"[research-memo] Research complete — {len(research):,} chars")
+        _log(f"[research-memo] Research complete — {len(research):,} chars")
 
+        _log("[research-memo] Formatting prompt...")
         prompt_text = RESEARCH_PROMPT.format(
             company_name=deal["company_name"],
             founder_name=deal.get("founder_name", ""),
@@ -169,6 +173,7 @@ def _run_research_memo_background(page_id: str) -> None:
             company_overview=(deal.get("company_overview") or "").strip() or "(not provided)",
             research=research,
         )
+        _log(f"[research-memo] Prompt ready — {len(prompt_text):,} chars. Calling Claude...")
 
         model = os.environ.get("ANTHROPIC_MODEL", "claude-sonnet-4-6")
         client = anthropic.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
@@ -179,14 +184,17 @@ def _run_research_memo_background(page_id: str) -> None:
             messages=[{"role": "user", "content": prompt_text}],
         )
         memo = response.content[0].text
-        print(f"[research-memo] Memo generated — {len(memo):,} chars")
+        _log(f"[research-memo] Memo generated — {len(memo):,} chars")
 
+        _log("[research-memo] Writing to Notion...")
         write_research_memo(page_id, memo)
         update_status(page_id, "Pending Review")
-        print(f"[research-memo] Done — {company}")
+        _log(f"[research-memo] Done — {company}")
 
     except Exception as exc:
-        print(f"[research-memo] ERROR for page {page_id}: {exc}")
+        import traceback
+        _log(f"[research-memo] ERROR for page {page_id}: {exc}")
+        _log(traceback.format_exc())
 
 
 @app.post("/generate/research-memo")
