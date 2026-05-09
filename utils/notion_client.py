@@ -102,8 +102,11 @@ def update_analysis_date(page_id: str) -> None:
 
 
 def write_memo(page_id: str, memo_text: str) -> None:
-    """Write investment memo to the page body only (not as a property)."""
-    _replace_page_body(page_id, "Investment Memo", memo_text)
+    """Write investment memo to the Investment Memo rich_text property."""
+    _client().pages.update(
+        page_id=page_id,
+        properties={"Investment Memo": {"rich_text": _chunk(memo_text)}},
+    )
 
 
 def read_page_text(page_id: str) -> str:
@@ -125,6 +128,14 @@ def read_page_text(page_id: str) -> str:
             break
         cursor = response.get("next_cursor")
     return "\n\n".join(text_parts)
+
+
+def write_research_memo(page_id: str, memo_text: str) -> None:
+    """Write research briefing to the Research Memo rich_text property."""
+    _client().pages.update(
+        page_id=page_id,
+        properties={"Research Memo": {"rich_text": _chunk(memo_text)}},
+    )
 
 
 def write_email(page_id: str, email_text: str) -> None:

@@ -22,7 +22,7 @@ load_dotenv()
 
 import anthropic
 
-from utils.notion_client import get_deal, read_page_text, resolve_page_id, update_status, write_email
+from utils.notion_client import get_deal, resolve_page_id, update_status, write_email
 from utils.prompts import EMAIL_GENERATION_PROMPT, EMAIL_SYSTEM_PROMPT
 
 _REQUIRED_ENV = ["NOTION_TOKEN", "ANTHROPIC_API_KEY"]
@@ -71,8 +71,8 @@ def _extract_traction_signal(memo: str) -> str:
 
 def generate_email(deal: dict, investor_type: str) -> str:
     """Call Claude to write a custom investor outreach email."""
-    # Read memo from page body (no longer stored as a property)
-    memo_summary = read_page_text(deal["page_id"])[:3000].strip()
+    # Read memo from Investment Memo property
+    memo_summary = deal.get("investment_memo", "")[:3000].strip()
     if not memo_summary:
         memo_summary = (
             f"No memo available. One-liner: {deal['one_liner']}. "

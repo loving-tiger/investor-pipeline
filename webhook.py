@@ -21,6 +21,7 @@ import base64
 import hashlib
 import hmac
 import os
+import threading
 
 from dotenv import load_dotenv
 
@@ -29,6 +30,7 @@ load_dotenv()
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
 from notion_client import Client
+from pydantic import BaseModel
 
 import utils.tally_parser as tally_parser
 import utils.typeform_parser as typeform_parser
@@ -124,6 +126,93 @@ async def tally_webhook(request: Request):
 
     fields = tally_parser.parse_submission(payload)
     return await _create_notion_page(fields, source="tally")
+
+
+# ---------------------------------------------------------------------------
+# Research memo generation (async, admin-triggered)
+# ---------------------------------------------------------------------------
+
+class ResearchMemoRequest(BaseModel):
+    notion_page_id: str
+
+
+def _run_research_memo_background(page_id: str) -> None:
+    """Run the full research memo pipeline in a background thread."""
+    import sys
+    # Ensure the project root is on the path when running inside the server
+    sys.path.insert(0, os.path.dirname(__file__))
+
+    try:
+        from utils.notion_client import get_deal, update_status, write_research_memo
+        from utils.research_agent import run_research_agent
+        from utils.prompts import RESEARCH_SYSTEM_PROMPT, RESEARCH_PROMPT
+        import anthropic
+
+        print(f"[research-memo] Starting pipeline for page {page_id}")
+        deal = get_deal(page_id)
+        company = deal.get("company_name", page_id)
+        print(f"[research-memo] Company: {company}")
+
+        update_status(page_id, "In Analysis")
+        research = run_research_agent(deal)
+        print(f"[research-memo] Research complete — {len(research):,} chars")
+
+        prompt_text = RESEARCH_PROMPT.format(
+            company_name=deal["company_name"],
+            founder_name=deal.get("founder_name", ""),
+            founder_linkedin=deal.get("founder_linkedin", ""),
+            company_website=deal.get("company_website", ""),
+            stage=deal.get("stage", ""),
+            raise_amount=deal.get("raise_amount", ""),
+            sector=deal.get("sector", ""),
+            one_liner=deal.get("one_liner", ""),
+            company_overview=(deal.get("company_overview") or "").strip() or "(not provided)",
+            research=research,
+        )
+
+        model = os.environ.get("ANTHROPIC_MODEL", "claude-sonnet-4-6")
+        client = anthropic.Anthropic()
+        response = client.messages.create(
+            model=model,
+            max_tokens=8192,
+            system=RESEARCH_SYSTEM_PROMPT,
+            messages=[{"role": "user", "content": prompt_text}],
+        )
+        memo = response.content[0].text
+        print(f"[research-memo] Memo generated — {len(memo):,} chars")
+
+        write_research_memo(page_id, memo)
+        update_status(page_id, "Pending Review")
+        print(f"[research-memo] Done — {company}")
+
+    except Exception as exc:
+        print(f"[research-memo] ERROR for page {page_id}: {exc}")
+
+
+@app.post("/generate/research-memo")
+async def generate_research_memo(payload: ResearchMemoRequest, request: Request):
+    """
+    Admin-triggered endpoint: kick off the research memo pipeline in the background.
+
+    Protected by PIPELINE_SECRET header. Returns immediately; pipeline runs async.
+    """
+    secret = os.environ.get("PIPELINE_SECRET", "")
+    provided = request.headers.get("X-Pipeline-Secret", "")
+    if secret and not hmac.compare_digest(secret, provided):
+        raise HTTPException(status_code=401, detail="Invalid pipeline secret.")
+
+    page_id = payload.notion_page_id
+    if not page_id:
+        raise HTTPException(status_code=400, detail="notion_page_id is required.")
+
+    thread = threading.Thread(
+        target=_run_research_memo_background,
+        args=(page_id,),
+        daemon=True,
+    )
+    thread.start()
+
+    return JSONResponse({"status": "started", "notion_page_id": page_id})
 
 
 # ---------------------------------------------------------------------------
