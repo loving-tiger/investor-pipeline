@@ -171,7 +171,7 @@ def _run_research_memo_background(page_id: str) -> None:
         )
 
         model = os.environ.get("ANTHROPIC_MODEL", "claude-sonnet-4-6")
-        client = anthropic.Anthropic()
+        client = anthropic.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
         response = client.messages.create(
             model=model,
             max_tokens=8192,
