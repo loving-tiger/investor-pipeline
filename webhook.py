@@ -208,7 +208,7 @@ async def generate_research_memo(payload: ResearchMemoRequest, request: Request)
     thread = threading.Thread(
         target=_run_research_memo_background,
         args=(page_id,),
-        daemon=True,
+        daemon=False,
     )
     thread.start()
 
