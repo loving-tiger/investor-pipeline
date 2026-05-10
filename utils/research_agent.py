@@ -123,16 +123,18 @@ _TOOLS: list[dict] = [
 ]
 
 
-def run_research_agent(deal: dict) -> str:
+def run_research_agent(deal: dict, on_search=None) -> str:
     """
     Run an iterative research agent on a deal and return a structured research report.
 
     The agent decides what to search for based on what it finds, following leads
     on founders, competitors, and funding rounds rather than running fixed queries.
     Returns a structured text report with five sections ready for memo generation.
+
+    on_search: optional callable(count: int, tool_name: str, query: str) called on each search.
     """
     model = os.environ.get("ANTHROPIC_MODEL", "claude-sonnet-4-6")
-    client = anthropic.Anthropic()
+    client = anthropic.Anthropic(api_key=os.environ.get("ANTHROPIC_API_KEY"))
 
     overview = deal.get("company_overview", "").strip()
     overview_block = f"\nFOUNDER-PROVIDED OVERVIEW:\n{overview}\n" if overview else ""
@@ -183,6 +185,8 @@ def run_research_agent(deal: dict) -> str:
             tool_call_count += 1
             query_preview = block.input.get("query", "")[:80]
             print(f"    [search {tool_call_count:02d}] {block.name}: {query_preview}")
+            if on_search:
+                on_search(tool_call_count, block.name, query_preview)
 
             if block.name == "exa_search":
                 result = exa_search_sync(

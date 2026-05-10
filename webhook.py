@@ -22,6 +22,8 @@ import hashlib
 import hmac
 import os
 import threading
+import time
+from typing import Any
 
 from dotenv import load_dotenv
 
@@ -36,6 +38,19 @@ import utils.tally_parser as tally_parser
 import utils.typeform_parser as typeform_parser
 
 app = FastAPI(title="Deal Flow Webhook", version="1.0.0")
+
+# ---------------------------------------------------------------------------
+# In-memory job state (single-process, WEB_CONCURRENCY=1)
+# ---------------------------------------------------------------------------
+
+_job_states: dict[str, dict[str, Any]] = {}
+
+
+def _set_job_state(page_id: str, **kwargs: Any) -> None:
+    if page_id not in _job_states:
+        _job_states[page_id] = {"status": "idle", "step": "", "search_count": 0, "started_at": time.time()}
+    _job_states[page_id].update(kwargs)
+
 
 _notion: Client | None = None
 
@@ -151,16 +166,23 @@ def _run_research_memo_background(page_id: str) -> None:
         from utils.prompts import RESEARCH_SYSTEM_PROMPT, RESEARCH_PROMPT
         import anthropic
 
+        _set_job_state(page_id, status="running", step="Fetching deal from Notion…", search_count=0, started_at=time.time())
         _log(f"[research-memo] Starting pipeline for page {page_id}")
         deal = get_deal(page_id)
         company = deal.get("company_name", page_id)
         _log(f"[research-memo] Company: {company}")
 
+        _set_job_state(page_id, step="Running research…", search_count=0)
         update_status(page_id, "In Analysis")
-        research = run_research_agent(deal)
+
+        def on_search(count: int, tool_name: str, query: str) -> None:
+            _set_job_state(page_id, step=f"Researching — search {count} of ~20…", search_count=count)
+
+        research = run_research_agent(deal, on_search=on_search)
         _log(f"[research-memo] Research complete — {len(research):,} chars")
 
-        _log("[research-memo] Formatting prompt...")
+        _set_job_state(page_id, step="Generating memo with Claude…")
+        _log("[research-memo] Calling Claude...")
         prompt_text = RESEARCH_PROMPT.format(
             company_name=deal["company_name"],
             founder_name=deal.get("founder_name", ""),
@@ -173,7 +195,7 @@ def _run_research_memo_background(page_id: str) -> None:
             company_overview=(deal.get("company_overview") or "").strip() or "(not provided)",
             research=research,
         )
-        _log(f"[research-memo] Prompt ready — {len(prompt_text):,} chars. Calling Claude...")
+        _log(f"[research-memo] Prompt ready — {len(prompt_text):,} chars")
 
         model = os.environ.get("ANTHROPIC_MODEL", "claude-sonnet-4-6")
         client = anthropic.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
@@ -186,13 +208,16 @@ def _run_research_memo_background(page_id: str) -> None:
         memo = response.content[0].text
         _log(f"[research-memo] Memo generated — {len(memo):,} chars")
 
+        _set_job_state(page_id, step="Writing to Notion…")
         _log("[research-memo] Writing to Notion...")
         write_research_memo(page_id, memo)
         update_status(page_id, "Pending Review")
+        _set_job_state(page_id, status="done", step="Done!")
         _log(f"[research-memo] Done — {company}")
 
     except Exception as exc:
         import traceback
+        _set_job_state(page_id, status="error", step=f"Error: {exc}")
         _log(f"[research-memo] ERROR for page {page_id}: {exc}")
         _log(traceback.format_exc())
 
@@ -221,6 +246,18 @@ async def generate_research_memo(payload: ResearchMemoRequest, request: Request)
     thread.start()
 
     return JSONResponse({"status": "started", "notion_page_id": page_id})
+
+
+@app.get("/generate/research-memo/status/{page_id}")
+async def research_memo_status(page_id: str, request: Request):
+    """Return the current job state for a given Notion page ID."""
+    secret = os.environ.get("PIPELINE_SECRET", "")
+    provided = request.headers.get("X-Pipeline-Secret", "")
+    if secret and not hmac.compare_digest(secret, provided):
+        raise HTTPException(status_code=401, detail="Invalid pipeline secret.")
+
+    state = _job_states.get(page_id, {"status": "idle", "step": "", "search_count": 0})
+    return JSONResponse(state)
 
 
 # ---------------------------------------------------------------------------
