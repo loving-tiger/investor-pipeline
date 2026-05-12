@@ -436,6 +436,29 @@ Framework adjustments applied: [1–2 sentences on what was adapted and why]
 
 ---
 
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+DIMENSION RATIONALES
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+A condensed, machine-readable summary of WHY each dimension received the score it did.
+Use this EXACT format — one line per dimension, prefix with D1–D7, no extra blank lines
+between entries, no markdown, no bracketed citations:
+
+D1: <one or two sentences explaining the D1 score for this specific company>
+D2: <one or two sentences explaining the D2 score for this specific company>
+D3: <one or two sentences explaining the D3 score for this specific company>
+D4: <one or two sentences explaining the D4 score for this specific company>
+D5: <one or two sentences explaining the D5 score for this specific company>
+D6: <one or two sentences explaining the D6 score for this specific company>
+D7: <one or two sentences explaining the D7 score for this specific company>
+
+Each rationale must:
+- Reference at least one specific finding from the research
+- Be self-contained (readable without the long-form analysis above)
+- Stay under 280 characters
+- Avoid hedging ("seems", "appears to") — state what the evidence shows
+
+---
+
 SCORING PHILOSOPHY:
 - Score what exists. Not what could exist.
 - Thin or inconclusive research on a dimension defaults to 4. Absence of
