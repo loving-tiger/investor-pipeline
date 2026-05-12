@@ -156,21 +156,26 @@ def _log(msg: str) -> None:
 
 
 def _run_research_memo_background(page_id: str) -> None:
-    """Run the full research memo pipeline in a background thread."""
+    """Run the full VC audit (investment memo) pipeline in a background thread.
+
+    Writes the scored investment memo to the 'Research Memo' Notion field so the
+    website can read dimension scores and display them visually on the deal page.
+    Go / No-Go verdict is stored in Notion but intentionally not surfaced on the site.
+    """
     import sys
     sys.path.insert(0, os.path.dirname(__file__))
 
     try:
-        from utils.notion_client import get_deal, update_status, write_research_memo
+        from utils.notion_client import get_deal, update_status, write_memo as write_research_memo, write_dimension_scores
         from utils.research_agent import run_research_agent
-        from utils.prompts import RESEARCH_SYSTEM_PROMPT, RESEARCH_PROMPT
+        from utils.prompts import ANALYSIS_SYSTEM_PROMPT, VC_AUDIT_PROMPT
         import anthropic
 
         _set_job_state(page_id, status="running", step="Fetching deal from Notion…", search_count=0, started_at=time.time())
-        _log(f"[research-memo] Starting pipeline for page {page_id}")
+        _log(f"[investment-memo] Starting pipeline for page {page_id}")
         deal = get_deal(page_id)
         company = deal.get("company_name", page_id)
-        _log(f"[research-memo] Company: {company}")
+        _log(f"[investment-memo] Company: {company}")
 
         _set_job_state(page_id, step="Running research…", search_count=0)
         update_status(page_id, "In Analysis")
@@ -179,11 +184,11 @@ def _run_research_memo_background(page_id: str) -> None:
             _set_job_state(page_id, step=f"Researching — search {count} of ~20…", search_count=count)
 
         research = run_research_agent(deal, on_search=on_search)
-        _log(f"[research-memo] Research complete — {len(research):,} chars")
+        _log(f"[investment-memo] Research complete — {len(research):,} chars")
 
-        _set_job_state(page_id, step="Generating memo with Claude…")
-        _log("[research-memo] Calling Claude...")
-        prompt_text = RESEARCH_PROMPT.format(
+        _set_job_state(page_id, step="Generating investment memo with Claude…")
+        _log("[investment-memo] Calling Claude...")
+        prompt_text = VC_AUDIT_PROMPT.format(
             company_name=deal["company_name"],
             founder_name=deal.get("founder_name", ""),
             founder_linkedin=deal.get("founder_linkedin", ""),
@@ -195,30 +200,48 @@ def _run_research_memo_background(page_id: str) -> None:
             company_overview=(deal.get("company_overview") or "").strip() or "(not provided)",
             research=research,
         )
-        _log(f"[research-memo] Prompt ready — {len(prompt_text):,} chars")
+        _log(f"[investment-memo] Prompt ready — {len(prompt_text):,} chars")
 
         model = os.environ.get("ANTHROPIC_MODEL", "claude-sonnet-4-6")
         client = anthropic.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
         response = client.messages.create(
             model=model,
             max_tokens=8192,
-            system=RESEARCH_SYSTEM_PROMPT,
+            system=ANALYSIS_SYSTEM_PROMPT,
             messages=[{"role": "user", "content": prompt_text}],
         )
         memo = response.content[0].text
-        _log(f"[research-memo] Memo generated — {len(memo):,} chars")
+        _log(f"[investment-memo] Memo generated — {len(memo):,} chars")
 
         _set_job_state(page_id, step="Writing to Notion…")
-        _log("[research-memo] Writing to Notion...")
+        _log("[investment-memo] Writing memo to Notion...")
         write_research_memo(page_id, memo)
+
+        # Parse the 7 dimension scores from the generated memo and write them
+        # as individual Number fields so the website can read them directly.
+        import re as _re
+        scores: list = []
+        score_block = _re.search(
+            r'Dimension scores:(.*?)(?:Aggregate score|Confidence:|Wellness pillar)',
+            memo, _re.IGNORECASE | _re.DOTALL,
+        )
+        if score_block:
+            for m in _re.finditer(r'\d+\.\s+[^:]+:\s+(\d+(?:\.\d+)?)/10', score_block.group(1)):
+                scores.append(float(m.group(1)))
+        if scores:
+            _log(f"[investment-memo] Parsed scores: {scores}")
+            write_dimension_scores(page_id, scores)
+        else:
+            _log("[investment-memo] WARNING: no dimension scores found in memo — skipping score write")
+
         update_status(page_id, "Pending Review")
         _set_job_state(page_id, status="done", step="Done!")
-        _log(f"[research-memo] Done — {company}")
+        _log(f"[investment-memo] Done — {company}")
 
     except Exception as exc:
         import traceback
         _set_job_state(page_id, status="error", step=f"Error: {exc}")
-        _log(f"[research-memo] ERROR for page {page_id}: {exc}")
+        _log(f"[investment-memo] ERROR for page {page_id}: {exc}")
         _log(traceback.format_exc())
 
 

@@ -102,11 +102,13 @@ def update_analysis_date(page_id: str) -> None:
 
 
 def write_memo(page_id: str, memo_text: str) -> None:
-    """Write investment memo to the Investment Memo rich_text property."""
-    _client().pages.update(
-        page_id=page_id,
-        properties={"Investment Memo": {"rich_text": _chunk(memo_text)}},
-    )
+    """Write investment memo to the page body as blocks.
+
+    Stores content as page blocks (heading + paragraphs) rather than a
+    rich_text database property. Large text properties make Notion's table
+    view extremely slow — page body blocks avoid this entirely.
+    """
+    _replace_page_body(page_id, "Investment Memo", memo_text)
 
 
 def read_page_text(page_id: str) -> str:
@@ -136,6 +138,31 @@ def write_research_memo(page_id: str, memo_text: str) -> None:
         page_id=page_id,
         properties={"Research Memo": {"rich_text": _chunk(memo_text)}},
     )
+
+
+_DIMENSION_FIELDS = [
+    "Consumer Love & PMF",
+    "Market & Timing",
+    "Clinical Evidence",
+    "Team & Founder Fit",
+    "Moat & Competition",
+    "Business Model",
+    "Vision & Uniqueness",
+]
+
+
+def write_dimension_scores(page_id: str, scores: list) -> None:
+    """Write 7 dimension scores to individual Number properties (D1 Score … D7 Score).
+
+    Args:
+        scores: list of up to 7 values; each entry is a float/int or None.
+    """
+    props: dict = {}
+    for field, score in zip(_DIMENSION_FIELDS, scores):
+        if score is not None:
+            props[field] = {"number": float(score)}
+    if props:
+        _client().pages.update(page_id=page_id, properties=props)
 
 
 def write_email(page_id: str, email_text: str) -> None:
